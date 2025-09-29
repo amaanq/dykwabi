@@ -1,0 +1,239 @@
+const std = @import("std");
+const process = std.process;
+const fs = std.fs;
+const mem = std.mem;
+
+const VERSION = "0.1.0";
+
+const Command = enum {
+    version,
+    run,
+    restart,
+    kill,
+    ipc,
+    help,
+};
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var args = try process.argsWithAllocator(allocator);
+    defer args.deinit();
+
+    // Skip program name
+    _ = args.skip();
+
+    const command_str = args.next() orelse {
+        try printUsage();
+        process.exit(1);
+    };
+
+    const command = parseCommand(command_str);
+
+    switch (command) {
+        .version => try runVersion(),
+        .run => try runShell(allocator, &args),
+        .restart => try restartShell(allocator),
+        .kill => try killShell(allocator),
+        .ipc => try runIpc(allocator, &args),
+        .help => try printUsage(),
+    }
+}
+
+fn parseCommand(cmd: []const u8) Command {
+    if (mem.eql(u8, cmd, "version")) return .version;
+    if (mem.eql(u8, cmd, "run")) return .run;
+    if (mem.eql(u8, cmd, "restart")) return .restart;
+    if (mem.eql(u8, cmd, "kill")) return .kill;
+    if (mem.eql(u8, cmd, "ipc")) return .ipc;
+    if (mem.eql(u8, cmd, "help") or mem.eql(u8, cmd, "--help") or mem.eql(u8, cmd, "-h")) return .help;
+    return .help;
+}
+
+fn printUsage() !void {
+    var buf: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
+    try stdout.print(
+        \\Dykwabi {s}
+        \\Amaan Qureshi <contact@amaanq.com>
+        \\
+        \\Dykwabi provides an overview of your installed
+        \\components and allows you to manage your setup.
+        \\
+        \\Usage: dykwabi [COMMAND]
+        \\
+        \\Commands:
+        \\  version     Show version information
+        \\  run         Launch quickshell with Dykwabi configuration
+        \\              Options: -d, --daemon  Run in daemon mode
+        \\  restart     Restart quickshell with Dykwabi configuration
+        \\  kill        Kill running Dykwabi shell processes
+        \\  ipc         Send IPC commands to running Dykwabi shell
+        \\  help        Print this message
+        \\
+        \\Options:
+        \\  -h, --help     Print help
+        \\  -v, --version  Print version
+        \\
+    , .{VERSION});
+    try stdout.flush();
+}
+
+fn runVersion() !void {
+    var buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
+    try stdout.print("Dykwabi v{s}\n", .{VERSION});
+    try stdout.flush();
+}
+
+fn runShell(allocator: mem.Allocator, args: *process.ArgIterator) !void {
+    var daemon_mode = false;
+
+    while (args.next()) |arg| {
+        if (mem.eql(u8, arg, "-d") or mem.eql(u8, arg, "--daemon")) {
+            daemon_mode = true;
+            break;
+        }
+    }
+
+    if (daemon_mode) {
+        try runShellDaemon(allocator);
+    } else {
+        try runShellInteractive();
+    }
+}
+
+fn newProcess(allocator: mem.Allocator, cmd: []const []const u8, behavior: process.Child.StdIo) std.process.Child {
+    var child = std.process.Child.init(cmd, allocator);
+    child.stdin_behavior = behavior;
+    child.stdout_behavior = behavior;
+    child.stderr_behavior = behavior;
+    return child;
+}
+
+fn runShellInteractive() !void {
+    var child = newProcess(std.heap.page_allocator, &[_][]const u8{ "qs", "-c", "dykwabi" }, .Inherit);
+
+    const term = try child.spawnAndWait();
+    if (term != .Exited or term.Exited != 0) {
+        std.log.err("Error starting quickshell", .{});
+        process.exit(1);
+    }
+}
+
+fn runShellDaemon(allocator: mem.Allocator) !void {
+    var child = newProcess(allocator, &[_][]const u8{ "qs", "-c", "dykwabi" }, .Ignore);
+
+    try child.spawn();
+    var buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
+    try stdout.print("Dykwabi shell started as daemon (PID: {d})\n", .{child.id});
+    try stdout.flush();
+}
+
+fn restartShell(allocator: mem.Allocator) !void {
+    try killShell(allocator);
+    try runShellDaemon(allocator);
+}
+
+fn killShell(allocator: mem.Allocator) !void {
+    const patterns = [_][]const u8{
+        "qs.*dykwabi",
+        "qs.*BuckMaterialShell",
+        "quickshell.*dykwabi",
+        "quickshell.*BuckMaterialShell",
+    };
+
+    var found_any = false;
+    var buf: [4096]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
+
+    for (patterns) |pattern| {
+        var child = std.process.Child.init(&[_][]const u8{ "pgrep", "-f", pattern }, allocator);
+        child.stdout_behavior = .Pipe;
+        child.stderr_behavior = .Ignore;
+
+        try child.spawn();
+        const output = try child.stdout.?.readToEndAlloc(allocator, 1024 * 1024);
+        defer allocator.free(output);
+
+        _ = try child.wait();
+
+        if (output.len > 0) {
+            found_any = true;
+            var iter = mem.splitScalar(u8, output, '\n');
+            while (iter.next()) |pid_str| {
+                if (pid_str.len == 0) continue;
+                const pid = std.fmt.parseInt(i32, mem.trim(u8, pid_str, &std.ascii.whitespace), 10) catch continue;
+
+                const pid_arg = try std.fmt.allocPrint(allocator, "{d}", .{pid});
+                defer allocator.free(pid_arg);
+                var kill_child = std.process.Child.init(&[_][]const u8{ "kill", pid_arg }, allocator);
+                _ = kill_child.spawnAndWait() catch |err| {
+                    try stdout.print("Error killing process {d}: {}\n", .{ pid, err });
+                    try stdout.flush();
+                    continue;
+                };
+
+                try stdout.print("Killed Dykwabi shell process with PID {d}\n", .{pid});
+                try stdout.flush();
+            }
+        }
+    }
+
+    if (!found_any) {
+        try stdout.writeAll("No running Dykwabi shell instances found.\n");
+        try stdout.flush();
+    }
+}
+
+fn runIpc(allocator: mem.Allocator, args: *process.ArgIterator) !void {
+    var ipc_args = std.ArrayList([]const u8).initCapacity(allocator, 8) catch std.ArrayList([]const u8){};
+    defer ipc_args.deinit(allocator);
+
+    try ipc_args.append(allocator, "qs");
+    try ipc_args.append(allocator, "-c");
+    try ipc_args.append(allocator, "dykwabi");
+    try ipc_args.append(allocator, "ipc");
+
+    var has_args = false;
+    var first_arg: ?[]const u8 = null;
+
+    while (args.next()) |arg| {
+        if (!has_args) {
+            first_arg = arg;
+        }
+        has_args = true;
+        try ipc_args.append(allocator, arg);
+    }
+
+    if (!has_args) {
+        var buf: [1024]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&buf);
+        const stderr = &stderr_writer.interface;
+        try stderr.writeAll("Error: IPC command requires arguments\n");
+        try stderr.writeAll("Usage: dykwabi ipc <command> [args...]\n");
+        try stderr.flush();
+        process.exit(1);
+    }
+
+    // Insert "call" if first arg isn't "call"
+    if (first_arg) |first| {
+        if (!mem.eql(u8, first, "call")) {
+            try ipc_args.insert(allocator, 4, "call");
+        }
+    }
+
+    var child = newProcess(allocator, ipc_args.items, .Inherit);
+    const term = try child.spawnAndWait();
+    if (term != .Exited or term.Exited != 0) {
+        std.log.err("Error running IPC command", .{});
+        process.exit(1);
+    }
+}
