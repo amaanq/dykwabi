@@ -24,6 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+        # This breaks bwrap in Ubuntu 24 🦼
+      - name: Disable AppArmor restrictions
+        run: |
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
         with:
