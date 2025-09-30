@@ -1,0 +1,73 @@
+name: Release
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build Release Artifacts
+    strategy:
+      matrix:
+        include:
+          - runs-on: ubuntu-24.04
+            nix-system: x86_64-linux
+            artifact-name: dykwabi-x86_64-linux
+          - runs-on: ubuntu-24.04-arm
+            nix-system: aarch64-linux
+            artifact-name: dykwabi-aarch64-linux
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+        with:
+          use-flakehub: false
+
+      - name: Build release binary
+        run: nix build .#dykwabi --system ${{ matrix.nix-system }}
+
+      - name: Prepare artifact
+        run: |
+          mkdir -p dist
+          cp -L result/bin/dykwabi dist/${{ matrix.artifact-name }}
+          chmod +x dist/${{ matrix.artifact-name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: dist/${{ matrix.artifact-name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archives
+        run: |
+          mkdir -p release
+          cd artifacts
+          for dir in */; do
+            artifact="${dir%/}"
+            cd "$artifact"
+            tar czf "../../release/${artifact}.tar.gz" *
+            cd ..
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
