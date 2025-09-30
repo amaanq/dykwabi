@@ -46,7 +46,7 @@ pub fn main() !void {
 
 fn printUsage() !void {
     var buf: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    var stdout_writer = fs.File.stdout().writer(&buf);
     const stdout = &stdout_writer.interface;
     try stdout.print(
         \\Dykwabi {s}
@@ -76,7 +76,7 @@ fn printUsage() !void {
 
 fn runVersion() !void {
     var buf: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    var stdout_writer = fs.File.stdout().writer(&buf);
     const stdout = &stdout_writer.interface;
     try stdout.print("Dykwabi v{s}\n", .{VERSION});
     try stdout.flush();
@@ -99,8 +99,8 @@ fn runShell(allocator: mem.Allocator, args: *process.ArgIterator) !void {
     }
 }
 
-fn newProcess(allocator: mem.Allocator, cmd: []const []const u8, behavior: process.Child.StdIo) std.process.Child {
-    var child = std.process.Child.init(cmd, allocator);
+fn newProcess(allocator: mem.Allocator, cmd: []const []const u8, behavior: process.Child.StdIo) process.Child {
+    var child = process.Child.init(cmd, allocator);
     child.stdin_behavior = behavior;
     child.stdout_behavior = behavior;
     child.stderr_behavior = behavior;
@@ -122,7 +122,7 @@ fn runShellDaemon(allocator: mem.Allocator) !void {
 
     try child.spawn();
     var buf: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    var stdout_writer = fs.File.stdout().writer(&buf);
     const stdout = &stdout_writer.interface;
     try stdout.print("Dykwabi shell started as daemon (PID: {d})\n", .{child.id});
     try stdout.flush();
@@ -143,12 +143,12 @@ fn killShell(allocator: mem.Allocator) !void {
 
     var found_any = false;
     var buf: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    var stdout_writer = fs.File.stdout().writer(&buf);
     const stdout = &stdout_writer.interface;
     defer stdout.flush() catch @panic("flushing stdout failed");
 
     for (patterns) |pattern| {
-        var child = std.process.Child.init(&[_][]const u8{ "pgrep", "-f", pattern }, allocator);
+        var child = process.Child.init(&[_][]const u8{ "pgrep", "-f", pattern }, allocator);
         child.stdout_behavior = .Pipe;
         child.stderr_behavior = .Ignore;
 
@@ -167,7 +167,7 @@ fn killShell(allocator: mem.Allocator) !void {
 
                 const pid_arg = try std.fmt.allocPrint(allocator, "{d}", .{pid});
                 defer allocator.free(pid_arg);
-                var kill_child = std.process.Child.init(&[_][]const u8{ "kill", pid_arg }, allocator);
+                var kill_child = process.Child.init(&[_][]const u8{ "kill", pid_arg }, allocator);
                 _ = kill_child.spawnAndWait() catch |err| {
                     try stdout.print("Error killing process {d}: {}\n", .{ pid, err });
                     try stdout.flush();
@@ -207,7 +207,7 @@ fn runIpc(allocator: mem.Allocator, args: *process.ArgIterator) !void {
 
     if (!has_args) {
         var buf: [1024]u8 = undefined;
-        var stderr_writer = std.fs.File.stderr().writer(&buf);
+        var stderr_writer = fs.File.stderr().writer(&buf);
         const stderr = &stderr_writer.interface;
         try stderr.writeAll("Error: IPC command requires arguments\n");
         try stderr.writeAll("Usage: dykwabi ipc <command> [args...]\n");
