@@ -11,6 +11,10 @@
       url = "github:Cloudef/zig2nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    zls = {
+      url = "github:zigtools/zls";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -61,12 +65,13 @@
           pkgs = pkgsFor.${system};
           zig-version = "0.15.1";
           zig = inputs.zig-overlay.packages.${system}.${zig-version};
+          zls = inputs.zls.packages.${system}.zls;
         in
         {
           default = pkgs.mkShell {
             nativeBuildInputs = [
               zig
-              pkgs.zls
+              zls
             ];
           };
         }
