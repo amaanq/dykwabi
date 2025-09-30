@@ -1,7 +1,8 @@
 const std = @import("std");
-const process = std.process;
 const fs = std.fs;
 const mem = std.mem;
+const meta = std.meta;
+const process = std.process;
 
 const VERSION = "0.1.0";
 
@@ -15,9 +16,10 @@ const Command = enum {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
 
     var args = try process.argsWithAllocator(allocator);
     defer args.deinit();
@@ -30,7 +32,7 @@ pub fn main() !void {
         process.exit(1);
     };
 
-    const command = parseCommand(command_str);
+    const command = meta.stringToEnum(Command, command_str) orelse .help;
 
     switch (command) {
         .version => try runVersion(),
@@ -40,16 +42,6 @@ pub fn main() !void {
         .ipc => try runIpc(allocator, &args),
         .help => try printUsage(),
     }
-}
-
-fn parseCommand(cmd: []const u8) Command {
-    if (mem.eql(u8, cmd, "version")) return .version;
-    if (mem.eql(u8, cmd, "run")) return .run;
-    if (mem.eql(u8, cmd, "restart")) return .restart;
-    if (mem.eql(u8, cmd, "kill")) return .kill;
-    if (mem.eql(u8, cmd, "ipc")) return .ipc;
-    if (mem.eql(u8, cmd, "help") or mem.eql(u8, cmd, "--help") or mem.eql(u8, cmd, "-h")) return .help;
-    return .help;
 }
 
 fn printUsage() !void {
@@ -153,6 +145,7 @@ fn killShell(allocator: mem.Allocator) !void {
     var buf: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buf);
     const stdout = &stdout_writer.interface;
+    defer stdout.flush() catch @panic("flushing stdout failed");
 
     for (patterns) |pattern| {
         var child = std.process.Child.init(&[_][]const u8{ "pgrep", "-f", pattern }, allocator);
@@ -182,25 +175,24 @@ fn killShell(allocator: mem.Allocator) !void {
                 };
 
                 try stdout.print("Killed Dykwabi shell process with PID {d}\n", .{pid});
-                try stdout.flush();
             }
         }
     }
 
     if (!found_any) {
         try stdout.writeAll("No running Dykwabi shell instances found.\n");
-        try stdout.flush();
     }
 }
 
 fn runIpc(allocator: mem.Allocator, args: *process.ArgIterator) !void {
-    var ipc_args = std.ArrayList([]const u8).initCapacity(allocator, 8) catch std.ArrayList([]const u8){};
+    const count = args.inner.count + 4;
+    var ipc_args = try std.ArrayList([]const u8).initCapacity(allocator, count);
     defer ipc_args.deinit(allocator);
 
-    try ipc_args.append(allocator, "qs");
-    try ipc_args.append(allocator, "-c");
-    try ipc_args.append(allocator, "dykwabi");
-    try ipc_args.append(allocator, "ipc");
+    ipc_args.appendAssumeCapacity("qs");
+    ipc_args.appendAssumeCapacity("-c");
+    ipc_args.appendAssumeCapacity("dykwabi");
+    ipc_args.appendAssumeCapacity("ipc");
 
     var has_args = false;
     var first_arg: ?[]const u8 = null;
@@ -210,7 +202,7 @@ fn runIpc(allocator: mem.Allocator, args: *process.ArgIterator) !void {
             first_arg = arg;
         }
         has_args = true;
-        try ipc_args.append(allocator, arg);
+        ipc_args.appendAssumeCapacity(arg);
     }
 
     if (!has_args) {

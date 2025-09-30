@@ -1,5 +1,5 @@
 {
-  description = "BuckMaterialShell Command Line Interface";
+  description = "Dykwabi - Do you know what a buck is";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,33 +14,23 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      zig-overlay,
-      zig2nix,
-    }:
+    inputs:
     let
-      supportedSystems = [
+      inherit (inputs.nixpkgs) lib;
+      inherit (inputs) self;
+      systems = [
         "x86_64-linux"
         "aarch64-linux"
       ];
-
-      forAllSystems =
-        f:
-        builtins.listToAttrs (
-          map (system: {
-            name = system;
-            value = f system;
-          }) supportedSystems
-        );
+      eachSystem = lib.genAttrs systems;
+      pkgsFor = inputs.nixpkgs.legacyPackages;
     in
     {
-      packages = forAllSystems (
+      packages = eachSystem (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
-          env = zig2nix.outputs.zig-env.${system} { };
+          pkgs = pkgsFor.${system};
+          env = inputs.zig2nix.outputs.zig-env.${system} { };
         in
         {
           dykwabi = env.package {
@@ -53,7 +43,7 @@
             ];
 
             meta = {
-              description = "BuckMaterialShell Command Line Interface";
+              description = "Dykwabi - Do you know what a buck is";
               homepage = "https://github.com/amaanq/dykwabi";
               mainProgram = "dykwabi";
               license = pkgs.lib.licenses.mit;
@@ -65,12 +55,12 @@
         }
       );
 
-      devShells = forAllSystems (
+      devShells = eachSystem (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = pkgsFor.${system};
           zig-version = "0.15.1";
-          zig = zig-overlay.packages.${system}.${zig-version};
+          zig = inputs.zig-overlay.packages.${system}.${zig-version};
         in
         {
           default = pkgs.mkShell {

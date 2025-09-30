@@ -7,7 +7,7 @@ A lightweight CLI tool for managing [BuckMaterialShell](https://github.com/amaan
 - **Process Management** - Start, stop, and restart your Quickshell instance
 - **Daemon Mode** - Run your shell in the background
 - **IPC Support** - Send commands to running shell instances
-- **Zero Dependencies** - Single statically-linked binary (46KB!)
+- **Zero Dependencies** - Single statically-linked binary (40KB!)
 
 ## Installation
 
@@ -59,18 +59,3 @@ dykwabi ipc <command> [args...]
 
 - [Quickshell](https://github.com/quickshell-mirror/quickshell) - The shell runtime (`qs` binary)
 - [BuckMaterialShell](https://github.com/amaanq/BuckMaterialShell) - The shell configuration (installed at `~/.config/quickshell/dykwabi`)
-
-## Building
-
-Built with [Zig](https://ziglang.org/) for maximum portability and minimal size:
-
-- **Language**: Zig 0.15.1
-- **Lines of Code**: ~240 LOC
-- **Binary Size**: 57KB (ReleaseSmall), 282KB (ReleaseFast)
-- **Dependencies**: None (stdlib only)
-- **Linking**: Static
-
-## License
-
-MIT
-
